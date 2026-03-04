@@ -1,0 +1,17 @@
+{
+  "name": "veltrix-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord de gestion des démos pour Veltrix Records",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node src/deploy-commands.js",
+    "setup": "node src/setup.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7"
+  }
+}
