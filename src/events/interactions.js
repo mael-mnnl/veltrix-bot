@@ -298,7 +298,8 @@ async function handleButtonInteraction(interaction) {
   else if (customId.startsWith('demo_accept_')) {
     const ticketId = customId.replace('demo_accept_', '');
 
-    if (!interaction.member.permissions.has('ManageMessages')) {
+    const arRoleId = process.env.AR_ROLE_ID;
+    if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.roles.cache.has(arRoleId)) {
       return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
     }
 
@@ -322,7 +323,8 @@ async function handleButtonInteraction(interaction) {
   else if (customId.startsWith('demo_reject_')) {
     const ticketId = customId.replace('demo_reject_', '');
 
-    if (!interaction.member.permissions.has('ManageMessages')) {
+    const arRoleId = process.env.AR_ROLE_ID;
+    if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.roles.cache.has(arRoleId)) {
       return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
     }
 

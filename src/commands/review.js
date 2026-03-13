@@ -6,7 +6,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('review')
     .setDescription('Manage submitted demos (Staff)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(0)
     .addSubcommand(sub =>
       sub.setName('accept')
         .setDescription('Accept a demo')
@@ -53,9 +53,13 @@ module.exports = {
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
+    const arRoleId = process.env.AR_ROLE_ID;
+    const isStaff = interaction.member.permissions.has('ManageMessages');
+    const isAR = interaction.member.roles.cache.has(arRoleId);
 
     switch (sub) {
       case 'accept': {
+        if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const comment = interaction.options.getString('comment');
         const demo = db.getDemo(ticketId);
@@ -83,6 +87,7 @@ module.exports = {
       }
 
       case 'reject': {
+        if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const comment = interaction.options.getString('comment');
         const demo = db.getDemo(ticketId);
@@ -110,6 +115,7 @@ module.exports = {
       }
 
       case 'assign': {
+        if (!isStaff) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need staff permissions to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const reviewer = interaction.options.getUser('reviewer');
         const demo = db.getDemo(ticketId);
@@ -126,6 +132,7 @@ module.exports = {
       }
 
       case 'view': {
+        if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const demo = db.getDemo(ticketId);
 
@@ -135,6 +142,7 @@ module.exports = {
       }
 
       case 'list': {
+        if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const status = interaction.options.getString('status');
         const demos = status ? db.getDemosByStatus(status) : db.getAllDemos();
 
@@ -158,6 +166,7 @@ module.exports = {
       }
 
       case 'search': {
+        if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const query = interaction.options.getString('query');
         const results = db.searchDemos(query);
 
