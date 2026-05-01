@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database/db');
 const { STATUS_EMOJI, STATUS_LABEL } = require('../utils/embeds');
 
@@ -13,27 +13,37 @@ module.exports = {
     if (demos.length === 0) {
       const embed = new EmbedBuilder()
         .setColor(0x555555)
-        .setTitle('🎵 Your submissions')
-        .setDescription('You haven\'t submitted any demos yet.\nUse `/demo` to send one!')
+        .setTitle('🎵 Tes soumissions')
+        .setDescription('Tu n\'as encore soumis aucune démo.\nUtilise `/demo` pour en envoyer une !')
         .setFooter({ text: 'VELTRIX RECORDS' });
-
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
     const lines = demos.map(d => {
       const emoji = STATUS_EMOJI[d.status] || '🎵';
       const label = STATUS_LABEL[d.status] || d.status;
-      const date = new Date(d.submitted_at).toLocaleDateString('en-US');
+      const date = new Date(d.submitted_at).toLocaleDateString('fr-FR');
       return `${emoji} \`${d.ticket_id}\` — **${d.track_title}** • ${label} • ${date}`;
     });
 
     const embed = new EmbedBuilder()
       .setColor(0x000000)
-      .setTitle('🎵 Your Veltrix submissions')
+      .setTitle('🎵 Tes soumissions Veltrix')
       .setDescription(lines.join('\n'))
-      .setFooter({ text: `${demos.length} submission(s) total` })
+      .setFooter({ text: `${demos.length} soumission(s) au total` })
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    // Cancel buttons for pending demos (up to 5, Discord limit)
+    const pendingDemos = demos.filter(d => d.status === 'pending').slice(0, 5);
+    const components = pendingDemos.map(d =>
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`demo_cancel_${d.ticket_id}`)
+          .setLabel(`Annuler ${d.ticket_id}`)
+          .setStyle(ButtonStyle.Danger)
+      )
+    );
+
+    return interaction.reply({ embeds: [embed], components, ephemeral: true });
   },
 };

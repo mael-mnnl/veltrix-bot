@@ -135,6 +135,13 @@ function assignDemo(ticketId, assignedTo) {
 function setDemoThread(ticketId, threadId) { run('UPDATE demos SET thread_id = ? WHERE ticket_id = ?', [threadId, ticketId]); }
 function setDemoMessage(ticketId, messageId) { run('UPDATE demos SET message_id = ? WHERE ticket_id = ?', [messageId, ticketId]); }
 
+function deleteDemo(ticketId) {
+  const demo = queryOne('SELECT id FROM demos WHERE ticket_id = ?', [ticketId]);
+  if (!demo) return;
+  run('DELETE FROM votes WHERE demo_id = ?', [demo.id]);
+  run('DELETE FROM demos WHERE ticket_id = ?', [ticketId]);
+}
+
 // ═══ VOTES ═══
 function addVote(demoId, userId, vote) {
   const existing = queryOne('SELECT * FROM votes WHERE demo_id = ? AND user_id = ?', [demoId, userId]);
@@ -191,7 +198,7 @@ function getLeaderboard() {
 
 module.exports = {
   initDb, generateTicketId, createDemo, getDemo, getDemoById,
-  updateDemoStatus, assignDemo, setDemoThread, setDemoMessage,
+  updateDemoStatus, assignDemo, setDemoThread, setDemoMessage, deleteDemo,
   addVote, getDemosByStatus, getDemosByUser, getAllDemos, searchDemos,
   getStats, getLeaderboard,
 };

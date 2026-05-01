@@ -1,6 +1,35 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const https = require('https');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const db = require('../database/db');
 const { demoEmbed, successEmbed, errorEmbed, infoEmbed } = require('../utils/embeds');
+
+const SC_REGEX = /^https?:\/\/(www\.)?soundcloud\.com\/.+/;
+
+function fetchSCThumbnail(url) {
+  return new Promise((resolve) => {
+    const oembedUrl = 'https://soundcloud.com/oembed?format=json&url=' + encodeURIComponent(url);
+    const req = https.get(oembedUrl, { timeout: 5000 }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data).thumbnail_url || null); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+  });
+}
+
+function hasReviewPermission(member) {
+  const arRoleId = process.env.AR_ROLE_ID;
+  const reviewRoleId = process.env.REVIEW_ROLE_ID;
+  return (
+    member.permissions.has('ManageMessages') ||
+    (arRoleId && member.roles.cache.has(arRoleId)) ||
+    (reviewRoleId && member.roles.cache.has(reviewRoleId))
+  );
+}
 
 // ═══════════════════════════════════════════════════════
 // MODAL SUBMISSIONS
@@ -16,9 +45,9 @@ async function handleModalSubmit(interaction) {
     const demoLink = interaction.fields.getTextInputValue('demo_link');
     const notes = interaction.fields.getTextInputValue('notes') || '';
 
-    if (!demoLink.startsWith('http')) {
+    if (!SC_REGEX.test(demoLink)) {
       return interaction.reply({
-        embeds: [errorEmbed('Invalid link', 'The link must start with `http://` or `https://`.')],
+        embeds: [errorEmbed('Lien invalide', 'Seuls les liens **SoundCloud** sont acceptés.\nEx: `https://soundcloud.com/artiste/titre`')],
         ephemeral: true,
       });
     }
@@ -36,8 +65,8 @@ async function handleModalSubmit(interaction) {
 
     await interaction.reply({
       embeds: [successEmbed(
-        'Demo submitted!',
-        `Your track **${trackTitle}** has been received.\n\n🎫 Your ticket: \`${ticketId}\`\nUse \`/mydemos\` to track the status.\n\nThe A&R team will listen to it soon. 🎧`
+        'Démo soumise !',
+        `Ton track **${trackTitle}** a bien été reçu.\n\n🎫 Ton ticket : \`${ticketId}\`\nUtilise \`/mydemos\` pour suivre le statut.\n\nL'équipe A&R va l'écouter bientôt. 🎧`
       )],
       ephemeral: true,
     });
@@ -50,8 +79,9 @@ async function handleModalSubmit(interaction) {
       const staffChannel = await interaction.client.channels.fetch(staffChannelId);
       if (!staffChannel) { console.log('⚠️ Could not fetch staff channel'); return; }
 
-      // Build embed directly from form data (no DB re-query needed)
-      const { EmbedBuilder } = require('discord.js');
+      // Fetch SoundCloud cover art (not stored in DB)
+      const thumbnail = await fetchSCThumbnail(demoLink);
+
       const embed = new EmbedBuilder()
         .setColor(0x555555)
         .setTitle(`⏳ ${trackTitle}`)
@@ -64,13 +94,13 @@ async function handleModalSubmit(interaction) {
           { name: '🗳️ Votes', value: '👍 0 / 👎 0 (Score: **0**)', inline: true },
         );
       if (notes) embed.addFields({ name: '📝 Notes', value: notes });
+      if (thumbnail) embed.setThumbnail(thumbnail);
       embed
         .setFooter({ text: `Submitted by ${interaction.user.username} • VELTRIX RECORDS` })
         .setTimestamp();
 
       const arRolePing = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
 
-      // Vote buttons + listen link
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`vote_up_${id}`)
@@ -80,13 +110,8 @@ async function handleModalSubmit(interaction) {
           .setCustomId(`vote_down_${id}`)
           .setLabel('👎 No')
           .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setLabel('🎧 Listen')
-          .setStyle(ButtonStyle.Link)
-          .setURL(demoLink),
       );
 
-      // Action buttons (opens modals with reason field)
       const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`demo_accept_${ticketId}`)
@@ -107,6 +132,9 @@ async function handleModalSubmit(interaction) {
         embeds: [embed],
         components: [row, row2],
       });
+
+      // Second message: raw SoundCloud URL so Discord shows the inline player
+      await staffChannel.send({ content: demoLink });
 
       db.setDemoMessage(ticketId, msg.id);
       console.log(`✅ Demo ${ticketId} posted in staff channel`);
@@ -149,14 +177,10 @@ async function handleModalSubmit(interaction) {
         const trackName = demo.track_title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').substring(0, 20);
         const channelName = `${artistName}-${trackName}`;
 
-        // Permission overwrites: deny @everyone, allow artist + staff + AR
         const permissionOverwrites = [
+          { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
           {
-            id: guild.id, // @everyone
-            deny: [PermissionFlagsBits.ViewChannel],
-          },
-          {
-            id: demo.discord_user_id, // the artist
+            id: demo.discord_user_id,
             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory],
           },
         ];
@@ -182,24 +206,31 @@ async function handleModalSubmit(interaction) {
           permissionOverwrites,
         });
 
-        // Welcome message in the release channel
         const welcomeEmbed = successEmbed(
           `Release — ${demo.track_title}`,
-          `Welcome <@${demo.discord_user_id}>! 🎉\n\nYour demo **${demo.track_title}** has been accepted by the Veltrix team.\n\n` +
-          `**🎫 Ticket:** \`${demo.ticket_id}\`\n` +
-          `**🎭 Genre:** ${demo.genre}\n` +
-          `**🔗 Demo:** ${demo.demo_link}\n\n` +
-          `This is your private channel to coordinate the release with the team. Feel free to share:\n` +
-          `• Final masters / stems\n` +
+          `Bienvenue <@${demo.discord_user_id}> ! 🎉\n\nTa démo **${demo.track_title}** a été acceptée par l'équipe Veltrix.\n\n` +
+          `**🎫 Ticket :** \`${demo.ticket_id}\`\n` +
+          `**🎭 Genre :** ${demo.genre}\n` +
+          `**🔗 Démo :** ${demo.demo_link}\n\n` +
+          `C'est ton salon privé pour coordonner la release avec l'équipe. N'hésite pas à partager :\n` +
+          `• Masters finaux / stems\n` +
           `• Artwork\n` +
-          `• Release date preferences\n` +
-          `• Any questions\n\n` +
-          `Let's make this one go viral. 🔥`
+          `• Préférences de date de sortie\n` +
+          `• Toute question\n\n` +
+          `Let's go ! 🔥`
+        );
+
+        const closeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('close_channel')
+            .setLabel('🔒 Fermer ce salon')
+            .setStyle(ButtonStyle.Danger)
         );
 
         await releaseChannel.send({
           content: `<@${demo.discord_user_id}>${staffRoleId ? ` <@&${staffRoleId}>` : ''}${arRoleId ? ` <@&${arRoleId}>` : ''}`,
           embeds: [welcomeEmbed],
+          components: [closeRow],
         });
 
       } catch (err) {
@@ -210,22 +241,22 @@ async function handleModalSubmit(interaction) {
     // DM the artist
     try {
       const artist = await interaction.client.users.fetch(demo.discord_user_id);
-      let dmText = `**${demo.track_title}** has been approved by Veltrix Records! We'll be in touch soon. 🔥`;
+      let dmText = `**${demo.track_title}** a été approuvé par Veltrix Records ! On te contacte bientôt. 🔥`;
       if (reason) dmText += `\n\n💬 *"${reason}"*`;
-      if (releaseChannel) dmText += `\n\n📌 A private channel has been created for your release: <#${releaseChannel.id}>`;
-      await artist.send({ embeds: [successEmbed('Your demo has been accepted! 🎉', dmText)] });
+      if (releaseChannel) dmText += `\n\n📌 Un salon privé a été créé pour ta release : <#${releaseChannel.id}>`;
+      await artist.send({ embeds: [successEmbed('Ta démo a été acceptée ! 🎉', dmText)] });
     } catch (e) {}
 
     // Update thread if exists
     if (demo.thread_id) {
       try {
         const thread = await interaction.client.channels.fetch(demo.thread_id);
-        if (thread) await thread.send({ embeds: [successEmbed('Demo accepted ✅', `Approved by <@${interaction.user.id}>${reason ? `\n💬 ${reason}` : ''}${releaseChannel ? `\n📌 Release channel: <#${releaseChannel.id}>` : ''}`)] });
+        if (thread) await thread.send({ embeds: [successEmbed('Démo acceptée ✅', `Approuvée par <@${interaction.user.id}>${reason ? `\n💬 ${reason}` : ''}${releaseChannel ? `\n📌 Salon release : <#${releaseChannel.id}>` : ''}`)] });
       } catch (e) {}
     }
 
-    const channelMention = releaseChannel ? ` Release channel: <#${releaseChannel.id}>` : '';
-    await interaction.reply({ content: `✅ **${demo.track_title}** by **${demo.artist_name}** accepted! Artist notified.${channelMention}`, ephemeral: true });
+    const channelMention = releaseChannel ? ` Salon release : <#${releaseChannel.id}>` : '';
+    await interaction.reply({ content: `✅ **${demo.track_title}** by **${demo.artist_name}** accepté ! Artiste notifié.${channelMention}`, ephemeral: true });
   }
 
   // ═══ REJECT MODAL (with reason) ═══
@@ -239,7 +270,6 @@ async function handleModalSubmit(interaction) {
     db.updateDemoStatus(ticketId, 'rejected', interaction.user.id, reason || null);
     const updated = db.getDemo(ticketId);
 
-    // Update the original message
     try {
       const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
       if (staffChannel && demo.message_id) {
@@ -252,20 +282,20 @@ async function handleModalSubmit(interaction) {
     // DM the artist
     try {
       const artist = await interaction.client.users.fetch(demo.discord_user_id);
-      let dmText = `**${demo.track_title}** was not selected this time. Don't give up, keep submitting! 💪`;
+      let dmText = `**${demo.track_title}** n'a pas été retenu cette fois. Continue à soumettre ! 💪`;
       if (reason) dmText += `\n\n💬 *"${reason}"*`;
-      await artist.send({ embeds: [errorEmbed('Demo not selected', dmText)] });
+      await artist.send({ embeds: [errorEmbed('Démo non retenue', dmText)] });
     } catch (e) {}
 
     // Update thread if exists
     if (demo.thread_id) {
       try {
         const thread = await interaction.client.channels.fetch(demo.thread_id);
-        if (thread) await thread.send({ embeds: [errorEmbed('Demo rejected', `By <@${interaction.user.id}>${reason ? `\n💬 ${reason}` : ''}`)] });
+        if (thread) await thread.send({ embeds: [errorEmbed('Démo refusée', `Par <@${interaction.user.id}>${reason ? `\n💬 ${reason}` : ''}`)] });
       } catch (e) {}
     }
 
-    await interaction.reply({ content: `❌ **${demo.track_title}** by **${demo.artist_name}** rejected. Artist notified.`, ephemeral: true });
+    await interaction.reply({ content: `❌ **${demo.track_title}** by **${demo.artist_name}** refusé. Artiste notifié.`, ephemeral: true });
   }
 }
 
@@ -287,7 +317,7 @@ async function handleButtonInteraction(interaction) {
     if (!demo) return interaction.reply({ content: '❌ Demo not found.', ephemeral: true });
 
     if (!result.changed) {
-      return interaction.reply({ content: `You already voted ${voteType === 'up' ? '👍' : '👎'} on this demo.`, ephemeral: true });
+      return interaction.reply({ content: `Tu as déjà voté ${voteType === 'up' ? '👍' : '👎'} sur cette démo.`, ephemeral: true });
     }
 
     const embed = demoEmbed(demo, { showVotes: true, showStatus: true });
@@ -296,21 +326,19 @@ async function handleButtonInteraction(interaction) {
 
   // ═══ ACCEPT BUTTON → Opens modal with reason field ═══
   else if (customId.startsWith('demo_accept_')) {
-    const ticketId = customId.replace('demo_accept_', '');
-
-    const arRoleId = process.env.AR_ROLE_ID;
-    if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.roles.cache.has(arRoleId)) {
-      return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
+    if (!hasReviewPermission(interaction.member)) {
+      return interaction.reply({ content: '❌ Tu n\'as pas la permission de faire ça.', ephemeral: true });
     }
 
+    const ticketId = customId.replace('demo_accept_', '');
     const modal = new ModalBuilder()
       .setCustomId(`accept_reason_${ticketId}`)
-      .setTitle('✅ Accept Demo');
+      .setTitle('✅ Accepter la démo');
 
     const reasonInput = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('Message to the artist (optional)')
-      .setPlaceholder('e.g. Great track! We\'ll contact you soon for the release...')
+      .setLabel('Message à l\'artiste (optionnel)')
+      .setPlaceholder('Ex : Super track ! On te contacte bientôt pour la release...')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(false)
       .setMaxLength(500);
@@ -321,21 +349,19 @@ async function handleButtonInteraction(interaction) {
 
   // ═══ REJECT BUTTON → Opens modal with reason field ═══
   else if (customId.startsWith('demo_reject_')) {
-    const ticketId = customId.replace('demo_reject_', '');
-
-    const arRoleId = process.env.AR_ROLE_ID;
-    if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.roles.cache.has(arRoleId)) {
-      return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
+    if (!hasReviewPermission(interaction.member)) {
+      return interaction.reply({ content: '❌ Tu n\'as pas la permission de faire ça.', ephemeral: true });
     }
 
+    const ticketId = customId.replace('demo_reject_', '');
     const modal = new ModalBuilder()
       .setCustomId(`reject_reason_${ticketId}`)
-      .setTitle('❌ Reject Demo');
+      .setTitle('❌ Refuser la démo');
 
     const reasonInput = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('Reason / feedback for the artist (optional)')
-      .setPlaceholder('e.g. The mix needs work, try resubmitting after adjustments...')
+      .setLabel('Raison / feedback pour l\'artiste (optionnel)')
+      .setPlaceholder('Ex : Le mix a besoin de travail, soumets à nouveau après...')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(false)
       .setMaxLength(500);
@@ -349,10 +375,10 @@ async function handleButtonInteraction(interaction) {
     const ticketId = customId.replace('demo_thread_', '');
     const demo = db.getDemo(ticketId);
 
-    if (!demo) return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+    if (!demo) return interaction.reply({ content: '❌ Ticket introuvable.', ephemeral: true });
 
     if (demo.thread_id) {
-      return interaction.reply({ content: `💬 A thread already exists: <#${demo.thread_id}>`, ephemeral: true });
+      return interaction.reply({ content: `💬 Un thread existe déjà : <#${demo.thread_id}>`, ephemeral: true });
     }
 
     try {
@@ -366,14 +392,71 @@ async function handleButtonInteraction(interaction) {
       await thread.send({
         embeds: [infoEmbed(
           `Discussion — ${demo.track_title}`,
-          `**Artist:** ${demo.artist_name}\n**Genre:** ${demo.genre}\n**Link:** ${demo.demo_link}\n\nDiscuss this demo here. 🎧`
+          `**Artiste :** ${demo.artist_name}\n**Genre :** ${demo.genre}\n**Lien :** ${demo.demo_link}\n\nDiscutez de cette démo ici. 🎧`
         )],
       });
 
-      await interaction.reply({ content: `💬 Thread created: <#${thread.id}>`, ephemeral: true });
+      await interaction.reply({ content: `💬 Thread créé : <#${thread.id}>`, ephemeral: true });
     } catch (err) {
       console.error('Error creating thread:', err);
-      await interaction.reply({ content: '❌ Error creating the thread.', ephemeral: true });
+      await interaction.reply({ content: '❌ Erreur lors de la création du thread.', ephemeral: true });
+    }
+  }
+
+  // ═══ CANCEL BUTTON (from /mydemos) ═══
+  else if (customId.startsWith('demo_cancel_')) {
+    const ticketId = customId.replace('demo_cancel_', '');
+    const demo = db.getDemo(ticketId);
+
+    if (!demo) return interaction.reply({ content: '❌ Ticket introuvable.', ephemeral: true });
+    if (demo.discord_user_id !== interaction.user.id) {
+      return interaction.reply({ content: '❌ Ce n\'est pas ta soumission.', ephemeral: true });
+    }
+    if (demo.status !== 'pending') {
+      return interaction.reply({ content: `❌ Impossible d'annuler une démo avec le statut **${demo.status}**.`, ephemeral: true });
+    }
+
+    // Delete the staff channel message (and the SC player message right after it)
+    try {
+      const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+      if (staffChannel && demo.message_id) {
+        try {
+          const msg = await staffChannel.messages.fetch(demo.message_id);
+          await msg.delete();
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    db.deleteDemo(ticketId);
+
+    await interaction.update({
+      content: `✅ Ta soumission **${demo.track_title}** (\`${ticketId}\`) a été annulée.`,
+      embeds: [],
+      components: [],
+    });
+  }
+
+  // ═══ CLOSE CHANNEL BUTTON (in release channels) ═══
+  else if (customId === 'close_channel') {
+    const staffRoleId = process.env.STAFF_ROLE_ID;
+    const arRoleId = process.env.AR_ROLE_ID;
+    const reviewRoleId = process.env.REVIEW_ROLE_ID;
+
+    const isAuth =
+      interaction.member.permissions.has('ManageChannels') ||
+      (staffRoleId && interaction.member.roles.cache.has(staffRoleId)) ||
+      (arRoleId && interaction.member.roles.cache.has(arRoleId)) ||
+      (reviewRoleId && interaction.member.roles.cache.has(reviewRoleId));
+
+    if (!isAuth) {
+      return interaction.reply({ content: '❌ Tu n\'as pas la permission de fermer ce salon.', ephemeral: true });
+    }
+
+    try {
+      await interaction.channel.delete();
+    } catch (err) {
+      console.error('Error deleting channel:', err);
+      await interaction.reply({ content: '❌ Impossible de supprimer le salon.', ephemeral: true });
     }
   }
 }
