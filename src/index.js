@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, Events, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events, ActivityType, EmbedBuilder } = require('discord.js');
 
 // Commands
 const demo = require('./commands/demo');
@@ -51,6 +51,48 @@ client.once(Events.ClientReady, (c) => {
   };
   updateStatus();
   setInterval(updateStatus, 30000);
+
+  // ═══ PENDING REMINDER — check every 24h ═══
+  const checkStaleDemos = async () => {
+    const db = require('./database/db');
+    const staleDemos = db.getDemosNeedingReminder();
+    if (staleDemos.length === 0) return;
+
+    const staffChannelId = process.env.STAFF_CHANNEL_ID;
+    if (!staffChannelId) return;
+
+    try {
+      const staffChannel = await client.channels.fetch(staffChannelId);
+      if (!staffChannel) return;
+
+      const lines = staleDemos.map(d =>
+        `• \`${d.ticket_id}\` — **${d.track_title}** by **${d.artist_name}** (soumis le ${new Date(d.submitted_at).toLocaleDateString('fr-FR')})`
+      ).join('\n');
+
+      const embed = new EmbedBuilder()
+        .setColor(0xFFAA00)
+        .setTitle('⏰ Démos sans réponse depuis +7 jours')
+        .setDescription(lines)
+        .setFooter({ text: 'VELTRIX RECORDS — Rappel automatique' })
+        .setTimestamp();
+
+      const ping = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
+      await staffChannel.send({
+        content: `${ping}Des démos attendent une réponse depuis plus d'une semaine !`,
+        embeds: [embed],
+      });
+
+      for (const d of staleDemos) db.markReminderSent(d.ticket_id);
+
+      console.log(`⏰ Reminder envoyé pour ${staleDemos.length} démo(s) stale`);
+    } catch (err) {
+      console.error('Error sending stale demo reminder:', err);
+    }
+  };
+
+  // Run once 10s after startup, then every 24h
+  setTimeout(checkStaleDemos, 10000);
+  setInterval(checkStaleDemos, 24 * 60 * 60 * 1000);
 });
 
 // ═══ INTERACTION HANDLER ═══
@@ -75,9 +117,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   } catch (error) {
     console.error('❌ Interaction error:', error);
-    
+
     const errorMessage = '❌ Une erreur est survenue. Réessaie !';
-    
+
     try {
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({ content: errorMessage, ephemeral: true });

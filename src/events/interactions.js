@@ -110,6 +110,10 @@ async function handleModalSubmit(interaction) {
           .setCustomId(`vote_down_${id}`)
           .setLabel('👎 No')
           .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setLabel('🎧 Listen')
+          .setStyle(ButtonStyle.Link)
+          .setURL(demoLink),
       );
 
       const row2 = new ActionRowBuilder().addComponents(
@@ -132,9 +136,6 @@ async function handleModalSubmit(interaction) {
         embeds: [embed],
         components: [row, row2],
       });
-
-      // Second message: raw SoundCloud URL so Discord shows the inline player
-      await staffChannel.send({ content: demoLink });
 
       db.setDemoMessage(ticketId, msg.id);
       console.log(`✅ Demo ${ticketId} posted in staff channel`);
@@ -311,17 +312,38 @@ async function handleButtonInteraction(interaction) {
     const voteType = customId.startsWith('vote_up_') ? 'up' : 'down';
     const demoId = parseInt(customId.replace(`vote_${voteType}_`, ''));
 
-    const result = db.addVote(demoId, interaction.user.id, voteType);
-    const demo = db.getDemoById(demoId);
+    const demoBefore = db.getDemoById(demoId);
+    if (!demoBefore) return interaction.reply({ content: '❌ Demo not found.', ephemeral: true });
+    const oldScore = demoBefore.votes_up - demoBefore.votes_down;
 
-    if (!demo) return interaction.reply({ content: '❌ Demo not found.', ephemeral: true });
+    const result = db.addVote(demoId, interaction.user.id, voteType);
 
     if (!result.changed) {
       return interaction.reply({ content: `Tu as déjà voté ${voteType === 'up' ? '👍' : '👎'} sur cette démo.`, ephemeral: true });
     }
 
+    const demo = db.getDemoById(demoId);
+    const newScore = demo.votes_up - demo.votes_down;
+    const SCORE_THRESHOLD = parseInt(process.env.SCORE_THRESHOLD) || 5;
+
     const embed = demoEmbed(demo, { showVotes: true, showStatus: true });
     await interaction.update({ embeds: [embed] });
+
+    // Score threshold notification
+    if (oldScore < SCORE_THRESHOLD && newScore >= SCORE_THRESHOLD) {
+      try {
+        const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+        if (staffChannel) {
+          const notifEmbed = new EmbedBuilder()
+            .setColor(0xFFD700)
+            .setTitle(`🔥 ${demo.track_title} — Score +${newScore} !`)
+            .setDescription(`by **${demo.artist_name}** • \`${demo.ticket_id}\`\n\nCette démo a atteint le seuil de **+${SCORE_THRESHOLD}** votes. Elle mérite une décision !`)
+            .setTimestamp();
+          const ping = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
+          await staffChannel.send({ content: `${ping}🔥 Seuil de score atteint !`, embeds: [notifEmbed] });
+        }
+      } catch (e) {}
+    }
   }
 
   // ═══ ACCEPT BUTTON → Opens modal with reason field ═══

@@ -51,7 +51,8 @@ function initTables() {
     submitted_at DATETIME DEFAULT (datetime('now')),
     reviewed_at DATETIME DEFAULT NULL,
     review_comment TEXT DEFAULT NULL,
-    reviewed_by TEXT DEFAULT NULL
+    reviewed_by TEXT DEFAULT NULL,
+    reminder_sent INTEGER DEFAULT 0
   );`);
   db.run(`CREATE TABLE IF NOT EXISTS votes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +63,7 @@ function initTables() {
     FOREIGN KEY (demo_id) REFERENCES demos(id),
     UNIQUE(demo_id, user_id)
   );`);
+  try { db.run(`ALTER TABLE demos ADD COLUMN reminder_sent INTEGER DEFAULT 0`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_status ON demos(status);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_ticket ON demos(ticket_id);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_user ON demos(discord_user_id);`); } catch(e) {}
@@ -142,6 +144,40 @@ function deleteDemo(ticketId) {
   run('DELETE FROM demos WHERE ticket_id = ?', [ticketId]);
 }
 
+function deleteDemosByUser(userId) {
+  const demos = queryAll('SELECT id FROM demos WHERE discord_user_id = ?', [userId]);
+  for (const d of demos) run('DELETE FROM votes WHERE demo_id = ?', [d.id]);
+  run('DELETE FROM demos WHERE discord_user_id = ?', [userId]);
+  return demos.length;
+}
+
+function deleteDemosByStatus(status) {
+  const demos = queryAll('SELECT id FROM demos WHERE status = ?', [status]);
+  for (const d of demos) run('DELETE FROM votes WHERE demo_id = ?', [d.id]);
+  run('DELETE FROM demos WHERE status = ?', [status]);
+  return demos.length;
+}
+
+function getDemosNeedingReminder() {
+  return queryAll(
+    `SELECT * FROM demos WHERE status = 'pending' AND submitted_at <= datetime('now', '-7 days') AND reminder_sent = 0`
+  );
+}
+
+function markReminderSent(ticketId) {
+  run('UPDATE demos SET reminder_sent = 1 WHERE ticket_id = ?', [ticketId]);
+}
+
+function getLeaderboardByAccepted() {
+  return queryAll(`
+    SELECT discord_user_id, discord_username, COUNT(*) as accepted_count
+    FROM demos WHERE status = 'accepted'
+    GROUP BY discord_user_id
+    ORDER BY accepted_count DESC
+    LIMIT 10
+  `);
+}
+
 // ═══ VOTES ═══
 function addVote(demoId, userId, vote) {
   const existing = queryOne('SELECT * FROM votes WHERE demo_id = ? AND user_id = ?', [demoId, userId]);
@@ -198,7 +234,9 @@ function getLeaderboard() {
 
 module.exports = {
   initDb, generateTicketId, createDemo, getDemo, getDemoById,
-  updateDemoStatus, assignDemo, setDemoThread, setDemoMessage, deleteDemo,
+  updateDemoStatus, assignDemo, setDemoThread, setDemoMessage,
+  deleteDemo, deleteDemosByUser, deleteDemosByStatus,
+  getDemosNeedingReminder, markReminderSent,
   addVote, getDemosByStatus, getDemosByUser, getAllDemos, searchDemos,
-  getStats, getLeaderboard,
+  getStats, getLeaderboard, getLeaderboardByAccepted,
 };

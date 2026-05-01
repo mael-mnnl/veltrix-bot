@@ -49,6 +49,19 @@ module.exports = {
       sub.setName('search')
         .setDescription('Search for a demo')
         .addStringOption(opt => opt.setName('query').setDescription('Artist, title, ticket ID, or genre').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('clean')
+        .setDescription('Supprimer des démos de la base de données')
+        .addUserOption(opt => opt.setName('user').setDescription('Supprimer toutes les démos de cet utilisateur').setRequired(false))
+        .addStringOption(opt => opt.setName('ticket').setDescription('Supprimer une démo par ticket ID').setRequired(false))
+        .addStringOption(opt => opt.setName('status')
+          .setDescription('Supprimer toutes les démos avec ce statut')
+          .addChoices(
+            { name: '⏳ Pending', value: 'pending' },
+            { name: '❌ Rejected', value: 'rejected' },
+          )
+          .setRequired(false))
     ),
 
   async execute(interaction) {
@@ -186,6 +199,36 @@ module.exports = {
           .setFooter({ text: `${results.length} result(s)` });
 
         return interaction.reply({ embeds: [embed] });
+      }
+
+      case 'clean': {
+        if (!isStaff) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need staff permissions to do this.')], ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const ticketOpt = interaction.options.getString('ticket');
+        const statusOpt = interaction.options.getString('status');
+
+        if (!targetUser && !ticketOpt && !statusOpt) {
+          return interaction.reply({ embeds: [errorEmbed('Paramètre manquant', 'Spécifie au moins un paramètre : `user`, `ticket`, ou `status`.')], ephemeral: true });
+        }
+
+        if (ticketOpt) {
+          const ticketId = ticketOpt.toUpperCase();
+          const demo = db.getDemo(ticketId);
+          if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket introuvable', `Aucune démo avec l'ID \`${ticketId}\`.`)], ephemeral: true });
+          db.deleteDemo(ticketId);
+          return interaction.reply({ content: `🗑️ Démo \`${ticketId}\` (**${demo.track_title}** by ${demo.artist_name}) supprimée.`, ephemeral: true });
+        }
+
+        if (targetUser) {
+          const count = db.deleteDemosByUser(targetUser.id);
+          return interaction.reply({ content: `🗑️ **${count}** démo(s) de <@${targetUser.id}> supprimée(s).`, ephemeral: true });
+        }
+
+        if (statusOpt) {
+          const count = db.deleteDemosByStatus(statusOpt);
+          return interaction.reply({ content: `🗑️ **${count}** démo(s) en statut **${statusOpt}** supprimée(s).`, ephemeral: true });
+        }
       }
     }
   },
