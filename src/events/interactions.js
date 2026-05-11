@@ -22,13 +22,8 @@ function fetchSCThumbnail(url) {
 }
 
 function hasReviewPermission(member) {
-  const arRoleId = process.env.AR_ROLE_ID;
   const reviewRoleId = process.env.REVIEW_ROLE_ID;
-  return (
-    member.permissions.has('ManageMessages') ||
-    (arRoleId && member.roles.cache.has(arRoleId)) ||
-    (reviewRoleId && member.roles.cache.has(reviewRoleId))
-  );
+  return reviewRoleId && member.roles.cache.has(reviewRoleId);
 }
 
 // ═══════════════════════════════════════════════════════
