@@ -10,14 +10,6 @@ module.exports = {
       .setCustomId('collab_submit_modal')
       .setTitle('🤝 VELTRIX — Collab Request');
 
-    const descriptionInput = new TextInputBuilder()
-      .setCustomId('collab_description')
-      .setLabel('What are you looking for?')
-      .setPlaceholder('e.g. Looking for a vocalist for a dark phonk track...')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(500);
-
     const genreInput = new TextInputBuilder()
       .setCustomId('collab_genre')
       .setLabel('Genre / Style')
@@ -42,7 +34,6 @@ module.exports = {
       .setMaxLength(100);
 
     modal.addComponents(
-      new ActionRowBuilder().addComponents(descriptionInput),
       new ActionRowBuilder().addComponents(genreInput),
       new ActionRowBuilder().addComponents(linkInput),
       new ActionRowBuilder().addComponents(contactInput),

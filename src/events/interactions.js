@@ -250,7 +250,6 @@ async function handleModalSubmit(interaction) {
 
   // ═══ COLLAB SUBMISSION MODAL ═══
   else if (interaction.customId === 'collab_submit_modal') {
-    const description = interaction.fields.getTextInputValue('collab_description');
     const genre = interaction.fields.getTextInputValue('collab_genre') || null;
     const link = interaction.fields.getTextInputValue('collab_link');
     const contact = interaction.fields.getTextInputValue('collab_contact') || null;
@@ -276,14 +275,13 @@ async function handleModalSubmit(interaction) {
       guildId: interaction.guild.id,
       creatorUserId: interaction.user.id,
       creatorUsername: interaction.user.username,
-      description,
+      description: genre || 'No genre specified',
       trackLink: link,
     });
 
     const embed = new EmbedBuilder()
       .setColor(0x9B59B6)
       .setTitle('🤝 Collab Request')
-      .setDescription(description)
       .addFields(
         { name: '👤 Posted by', value: `<@${interaction.user.id}>`, inline: true },
         { name: '🎵 Track', value: link, inline: true },
