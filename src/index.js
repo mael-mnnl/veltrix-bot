@@ -36,10 +36,9 @@ client.once(Events.ClientReady, (c) => {
   console.log('═══════════════════════════════════════');
   console.log('');
 
-  // Rotating status
   const statuses = [
-    { name: '/demo pour soumettre', type: ActivityType.Listening },
-    { name: 'les démos', type: ActivityType.Listening },
+    { name: 'Submit a demo with /demo', type: ActivityType.Listening },
+    { name: 'the demos', type: ActivityType.Listening },
     { name: 'Veltrix Records', type: ActivityType.Watching },
     { name: 'SHAPE THE NOISE', type: ActivityType.Playing },
   ];
@@ -66,31 +65,30 @@ client.once(Events.ClientReady, (c) => {
       if (!staffChannel) return;
 
       const lines = staleDemos.map(d =>
-        `• \`${d.ticket_id}\` — **${d.track_title}** by **${d.artist_name}** (soumis le ${new Date(d.submitted_at).toLocaleDateString('fr-FR')})`
+        `• \`${d.ticket_id}\` — **${d.track_title}** by **${d.artist_name}** (submitted on ${new Date(d.submitted_at).toLocaleDateString('en-US')})`
       ).join('\n');
 
       const embed = new EmbedBuilder()
         .setColor(0xFFAA00)
-        .setTitle('⏰ Démos sans réponse depuis +7 jours')
+        .setTitle('⏰ Demos without a response for 7+ days')
         .setDescription(lines)
-        .setFooter({ text: 'VELTRIX RECORDS — Rappel automatique' })
+        .setFooter({ text: 'VELTRIX RECORDS — Automatic reminder' })
         .setTimestamp();
 
       const ping = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
       await staffChannel.send({
-        content: `${ping}Des démos attendent une réponse depuis plus d'une semaine !`,
+        content: `${ping}Some demos have been waiting for a response for over a week!`,
         embeds: [embed],
       });
 
       for (const d of staleDemos) db.markReminderSent(d.ticket_id);
 
-      console.log(`⏰ Reminder envoyé pour ${staleDemos.length} démo(s) stale`);
+      console.log(`⏰ Reminder sent for ${staleDemos.length} stale demo(s)`);
     } catch (err) {
       console.error('Error sending stale demo reminder:', err);
     }
   };
 
-  // Run once 10s after startup, then every 24h
   setTimeout(checkStaleDemos, 10000);
   setInterval(checkStaleDemos, 24 * 60 * 60 * 1000);
 });
@@ -98,54 +96,43 @@ client.once(Events.ClientReady, (c) => {
 // ═══ INTERACTION HANDLER ═══
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    // Slash commands
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);
       if (!command) return;
       await command.execute(interaction);
     }
-
-    // Modal submits (demo form)
     else if (interaction.isModalSubmit()) {
       await handleModalSubmit(interaction);
     }
-
-    // Button clicks (votes, accept/reject, thread)
     else if (interaction.isButton()) {
       await handleButtonInteraction(interaction);
     }
-
   } catch (error) {
     console.error('❌ Interaction error:', error);
-
-    const errorMessage = '❌ Une erreur est survenue. Réessaie !';
-
+    const errorMessage = '❌ An error occurred. Please try again!';
     try {
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({ content: errorMessage, ephemeral: true });
       } else {
         await interaction.reply({ content: errorMessage, ephemeral: true });
       }
-    } catch (e) {
-      // Can't respond at all
-    }
+    } catch (e) {}
   }
 });
 
 // ═══ LOGIN ═══
 if (!process.env.DISCORD_TOKEN) {
   console.error('');
-  console.error('❌ DISCORD_TOKEN manquant !');
-  console.error('   Copie .env.example → .env et remplis les valeurs.');
+  console.error('❌ DISCORD_TOKEN missing!');
+  console.error('   Copy .env.example → .env and fill in the values.');
   console.error('');
   process.exit(1);
 }
 
-// Init DB (async) then login
 const db = require('./database/db');
 db.initDb().then(() => {
   client.login(process.env.DISCORD_TOKEN);
 }).catch(err => {
-  console.error('❌ Erreur init DB:', err);
+  console.error('❌ DB init error:', err);
   process.exit(1);
 });

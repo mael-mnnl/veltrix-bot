@@ -17,7 +17,7 @@ const stats = {
 const leaderboard = {
   data: new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Top artistes Veltrix — classement par démos acceptées'),
+    .setDescription('Veltrix top artists — ranked by accepted demos'),
 
   async execute(interaction) {
     await interaction.deferReply();
@@ -27,15 +27,14 @@ const leaderboard = {
     if (entries.length === 0) {
       const embed = new EmbedBuilder()
         .setColor(0x000000)
-        .setTitle('🏆 Leaderboard Veltrix')
-        .setDescription('Aucun artiste dans le classement pour l\'instant.\nSoumets une démo avec `/demo` !')
+        .setTitle('🏆 Veltrix Leaderboard')
+        .setDescription('No artists in the leaderboard yet.\nSubmit a demo with `/demo`!')
         .setFooter({ text: 'VELTRIX RECORDS' });
       return interaction.editReply({ embeds: [embed] });
     }
 
     const medals = ['🥇', '🥈', '🥉'];
 
-    // Fetch Discord users for avatars
     const userDataMap = {};
     for (const entry of entries) {
       try {
@@ -48,7 +47,7 @@ const leaderboard = {
     const lines = entries.map((e, i) => {
       const medal = medals[i] || `**${i + 1}.**`;
       const count = e.accepted_count;
-      const label = count === 1 ? 'démo acceptée' : 'démos acceptées';
+      const label = count === 1 ? 'accepted demo' : 'accepted demos';
       return `${medal} <@${e.discord_user_id}> — **${count}** ${label}`;
     });
 
@@ -56,9 +55,9 @@ const leaderboard = {
 
     const embed = new EmbedBuilder()
       .setColor(0xFFD700)
-      .setTitle('🏆 Leaderboard — Artistes Veltrix')
+      .setTitle('🏆 Leaderboard — Veltrix Artists')
       .setDescription(lines.join('\n'))
-      .setFooter({ text: 'Classé par démos acceptées • VELTRIX RECORDS' })
+      .setFooter({ text: 'Ranked by accepted demos • VELTRIX RECORDS' })
       .setTimestamp();
 
     if (topUser) embed.setThumbnail(topUser.displayAvatarURL({ size: 256 }));

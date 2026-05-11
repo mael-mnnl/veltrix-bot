@@ -52,11 +52,11 @@ module.exports = {
     )
     .addSubcommand(sub =>
       sub.setName('clean')
-        .setDescription('Supprimer des démos de la base de données')
-        .addUserOption(opt => opt.setName('user').setDescription('Supprimer toutes les démos de cet utilisateur').setRequired(false))
-        .addStringOption(opt => opt.setName('ticket').setDescription('Supprimer une démo par ticket ID').setRequired(false))
+        .setDescription('Delete demos from the database')
+        .addUserOption(opt => opt.setName('user').setDescription('Delete all demos from this user').setRequired(false))
+        .addStringOption(opt => opt.setName('ticket').setDescription('Delete a demo by ticket ID').setRequired(false))
         .addStringOption(opt => opt.setName('status')
-          .setDescription('Supprimer toutes les démos avec ce statut')
+          .setDescription('Delete all demos with this status')
           .addChoices(
             { name: '⏳ Pending', value: 'pending' },
             { name: '❌ Rejected', value: 'rejected' },
@@ -209,25 +209,25 @@ module.exports = {
         const statusOpt = interaction.options.getString('status');
 
         if (!targetUser && !ticketOpt && !statusOpt) {
-          return interaction.reply({ embeds: [errorEmbed('Paramètre manquant', 'Spécifie au moins un paramètre : `user`, `ticket`, ou `status`.')], ephemeral: true });
+          return interaction.reply({ embeds: [errorEmbed('Missing parameter', 'Specify at least one parameter: `user`, `ticket`, or `status`.')], ephemeral: true });
         }
 
         if (ticketOpt) {
           const ticketId = ticketOpt.toUpperCase();
           const demo = db.getDemo(ticketId);
-          if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket introuvable', `Aucune démo avec l'ID \`${ticketId}\`.`)], ephemeral: true });
+          if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\`.`)], ephemeral: true });
           db.deleteDemo(ticketId);
-          return interaction.reply({ content: `🗑️ Démo \`${ticketId}\` (**${demo.track_title}** by ${demo.artist_name}) supprimée.`, ephemeral: true });
+          return interaction.reply({ content: `🗑️ Demo \`${ticketId}\` (**${demo.track_title}** by ${demo.artist_name}) deleted.`, ephemeral: true });
         }
 
         if (targetUser) {
           const count = db.deleteDemosByUser(targetUser.id);
-          return interaction.reply({ content: `🗑️ **${count}** démo(s) de <@${targetUser.id}> supprimée(s).`, ephemeral: true });
+          return interaction.reply({ content: `🗑️ **${count}** demo(s) from <@${targetUser.id}> deleted.`, ephemeral: true });
         }
 
         if (statusOpt) {
           const count = db.deleteDemosByStatus(statusOpt);
-          return interaction.reply({ content: `🗑️ **${count}** démo(s) en statut **${statusOpt}** supprimée(s).`, ephemeral: true });
+          return interaction.reply({ content: `🗑️ **${count}** demo(s) with status **${statusOpt}** deleted.`, ephemeral: true });
         }
       }
     }
