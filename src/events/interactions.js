@@ -45,9 +45,9 @@ async function handleModalSubmit(interaction) {
     const demoLink = interaction.fields.getTextInputValue('demo_link');
     const notes = interaction.fields.getTextInputValue('notes') || '';
 
-    if (!SC_REGEX.test(demoLink)) {
+    if (!demoLink.startsWith('http')) {
       return interaction.reply({
-        embeds: [errorEmbed('Lien invalide', 'Seuls les liens **SoundCloud** sont acceptés.\nEx: `https://soundcloud.com/artiste/titre`')],
+        embeds: [errorEmbed('Lien invalide', 'Le lien doit commencer par `http://` ou `https://`.')],
         ephemeral: true,
       });
     }

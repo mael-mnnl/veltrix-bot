@@ -36,8 +36,8 @@ module.exports = {
 
     const linkInput = new TextInputBuilder()
       .setCustomId('demo_link')
-      .setLabel('Lien SoundCloud')
-      .setPlaceholder('https://soundcloud.com/artiste/titre-du-track')
+      .setLabel('Demo link')
+      .setPlaceholder('https://soundcloud.com/... ou https://drive.google.com/...')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
