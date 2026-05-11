@@ -6,6 +6,7 @@ const demo = require('./commands/demo');
 const review = require('./commands/review');
 const { stats, leaderboard } = require('./commands/stats');
 const mydemos = require('./commands/mydemos');
+const collab = require('./commands/collab');
 
 // Event handlers
 const { handleModalSubmit, handleButtonInteraction } = require('./events/interactions');
@@ -25,6 +26,7 @@ client.commands.set(review.data.name, review);
 client.commands.set(stats.data.name, stats);
 client.commands.set(leaderboard.data.name, leaderboard);
 client.commands.set(mydemos.data.name, mydemos);
+client.commands.set(collab.data.name, collab);
 
 // ═══ READY ═══
 client.once(Events.ClientReady, (c) => {

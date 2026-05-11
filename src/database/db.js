@@ -63,6 +63,25 @@ function initTables() {
     FOREIGN KEY (demo_id) REFERENCES demos(id),
     UNIQUE(demo_id, user_id)
   );`);
+  db.run(`CREATE TABLE IF NOT EXISTS collabs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT,
+    guild_id TEXT NOT NULL,
+    creator_user_id TEXT NOT NULL,
+    creator_username TEXT NOT NULL,
+    description TEXT NOT NULL,
+    track_link TEXT,
+    created_at DATETIME DEFAULT (datetime('now'))
+  );`);
+  db.run(`CREATE TABLE IF NOT EXISTS collab_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collab_id INTEGER NOT NULL,
+    requester_user_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','accepted','declined')),
+    created_at DATETIME DEFAULT (datetime('now')),
+    FOREIGN KEY (collab_id) REFERENCES collabs(id),
+    UNIQUE(collab_id, requester_user_id)
+  );`);
   try { db.run(`ALTER TABLE demos ADD COLUMN reminder_sent INTEGER DEFAULT 0`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_status ON demos(status);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_ticket ON demos(ticket_id);`); } catch(e) {}
@@ -232,6 +251,35 @@ function getLeaderboard() {
   `);
 }
 
+// ═══ COLLABS ═══
+function createCollab({ guildId, creatorUserId, creatorUsername, description, trackLink }) {
+  run(
+    `INSERT INTO collabs (guild_id, creator_user_id, creator_username, description, track_link) VALUES (?, ?, ?, ?, ?)`,
+    [guildId, creatorUserId, creatorUsername, description, trackLink || null]
+  );
+  return queryOne('SELECT id FROM collabs WHERE creator_user_id = ? ORDER BY id DESC LIMIT 1', [creatorUserId]);
+}
+
+function getCollabById(id) { return queryOne('SELECT * FROM collabs WHERE id = ?', [id]); }
+function getCollabByMessageId(messageId) { return queryOne('SELECT * FROM collabs WHERE message_id = ?', [messageId]); }
+function setCollabMessage(id, messageId) { run('UPDATE collabs SET message_id = ? WHERE id = ?', [messageId, id]); }
+
+function createCollabRequest(collabId, requesterUserId) {
+  const existing = queryOne('SELECT * FROM collab_requests WHERE collab_id = ? AND requester_user_id = ?', [collabId, requesterUserId]);
+  if (existing) return { id: existing.id, alreadyExists: true };
+  run('INSERT INTO collab_requests (collab_id, requester_user_id) VALUES (?, ?)', [collabId, requesterUserId]);
+  const req = queryOne('SELECT id FROM collab_requests WHERE collab_id = ? AND requester_user_id = ?', [collabId, requesterUserId]);
+  return { id: req.id, alreadyExists: false };
+}
+
+function getCollabRequest(collabId, requesterId) {
+  return queryOne('SELECT * FROM collab_requests WHERE collab_id = ? AND requester_user_id = ?', [collabId, requesterId]);
+}
+
+function updateCollabRequestStatus(collabId, requesterId, status) {
+  run('UPDATE collab_requests SET status = ? WHERE collab_id = ? AND requester_user_id = ?', [status, collabId, requesterId]);
+}
+
 module.exports = {
   initDb, generateTicketId, createDemo, getDemo, getDemoById,
   updateDemoStatus, assignDemo, setDemoThread, setDemoMessage,
@@ -239,4 +287,6 @@ module.exports = {
   getDemosNeedingReminder, markReminderSent,
   addVote, getDemosByStatus, getDemosByUser, getAllDemos, searchDemos,
   getStats, getLeaderboard, getLeaderboardByAccepted,
+  createCollab, getCollabById, getCollabByMessageId, setCollabMessage,
+  createCollabRequest, getCollabRequest, updateCollabRequestStatus,
 };

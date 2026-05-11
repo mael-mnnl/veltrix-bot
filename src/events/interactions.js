@@ -442,6 +442,190 @@ async function handleButtonInteraction(interaction) {
     });
   }
 
+  // ═══ COLLAB JOIN BUTTON ═══
+  else if (customId.startsWith('collab_join_')) {
+    const collabId = parseInt(customId.replace('collab_join_', ''));
+    const collab = db.getCollabById(collabId);
+
+    if (!collab) return interaction.reply({ content: '❌ Collab not found.', ephemeral: true });
+
+    if (collab.creator_user_id === interaction.user.id) {
+      return interaction.reply({ content: '❌ You can\'t participate in your own collab request.', ephemeral: true });
+    }
+
+    const { alreadyExists } = db.createCollabRequest(collabId, interaction.user.id);
+    if (alreadyExists) {
+      return interaction.reply({ content: '⏳ You already sent a request for this collab. Wait for the artist\'s response.', ephemeral: true });
+    }
+
+    // DM the collab creator
+    try {
+      const creator = await interaction.client.users.fetch(collab.creator_user_id);
+      const requesterUser = interaction.user;
+
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setTitle('🤝 New collab request!')
+        .setDescription(`**${requesterUser.username}** wants to collab with you on your request!`)
+        .addFields(
+          { name: '👤 Requester', value: `<@${requesterUser.id}>`, inline: true },
+          { name: '🎵 Your track', value: collab.track_link || 'See attachment', inline: true },
+          { name: '📝 Your description', value: collab.description },
+        )
+        .setThumbnail(requesterUser.displayAvatarURL({ size: 256 }))
+        .setTimestamp();
+
+      const dmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`collab_accept_${collabId}_${requesterUser.id}`)
+          .setLabel('✅ Accept')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`collab_decline_${collabId}_${requesterUser.id}`)
+          .setLabel('❌ Decline')
+          .setStyle(ButtonStyle.Danger),
+      );
+
+      await creator.send({ embeds: [dmEmbed], components: [dmRow] });
+      await interaction.reply({ content: '✅ Your request has been sent! The artist will be notified.', ephemeral: true });
+    } catch (e) {
+      db.updateCollabRequestStatus(collabId, interaction.user.id, 'declined');
+      await interaction.reply({ content: '❌ Could not DM the artist (their DMs may be closed).', ephemeral: true });
+    }
+  }
+
+  // ═══ COLLAB ACCEPT (from DM) ═══
+  else if (customId.startsWith('collab_accept_')) {
+    const parts = customId.replace('collab_accept_', '').split('_');
+    const collabId = parseInt(parts[0]);
+    const requesterId = parts[1];
+    const collab = db.getCollabById(collabId);
+
+    if (!collab) return interaction.reply({ content: '❌ Collab not found.', ephemeral: true });
+
+    const existing = db.getCollabRequest(collabId, requesterId);
+    if (existing && existing.status !== 'pending') {
+      return interaction.update({ content: `This request has already been **${existing.status}**.`, embeds: [], components: [] });
+    }
+
+    db.updateCollabRequestStatus(collabId, requesterId, 'accepted');
+
+    // Create private collab channel
+    let collabChannel = null;
+    try {
+      const guild = await interaction.client.guilds.fetch(collab.guild_id);
+      const categoryId = process.env.COLLAB_CATEGORY_ID || process.env.RELEASE_CATEGORY_ID;
+      const staffRoleId = process.env.STAFF_ROLE_ID;
+
+      const creatorSlug = collab.creator_username.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 12);
+      const requesterUser = await interaction.client.users.fetch(requesterId);
+      const requesterSlug = requesterUser.username.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 12);
+
+      const permissionOverwrites = [
+        { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+        {
+          id: collab.creator_user_id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory],
+        },
+        {
+          id: requesterId,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory],
+        },
+      ];
+
+      if (staffRoleId) {
+        permissionOverwrites.push({
+          id: staffRoleId,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory],
+        });
+      }
+
+      const channelOptions = {
+        name: `collab-${creatorSlug}-${requesterSlug}`,
+        type: ChannelType.GuildText,
+        permissionOverwrites,
+      };
+      if (categoryId) channelOptions.parent = categoryId;
+
+      collabChannel = await guild.channels.create(channelOptions);
+
+      const welcomeEmbed = new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setTitle('🤝 Collab Channel')
+        .setDescription(
+          `<@${collab.creator_user_id}> & <@${requesterId}> — your collab is ON! 🔥\n\n` +
+          `**Original request:** ${collab.description}\n` +
+          (collab.track_link ? `**Track:** ${collab.track_link}\n` : '') +
+          `\nUse this channel to share files, ideas, and coordinate your work.`
+        )
+        .setTimestamp();
+
+      const closeRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('close_channel')
+          .setLabel('🔒 Close channel')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await collabChannel.send({
+        content: `<@${collab.creator_user_id}> <@${requesterId}>`,
+        embeds: [welcomeEmbed],
+        components: [closeRow],
+      });
+    } catch (err) {
+      console.error('Error creating collab channel:', err);
+    }
+
+    // DM the requester
+    try {
+      const requesterUser = await interaction.client.users.fetch(requesterId);
+      const dmText = collabChannel
+        ? `**${collab.creator_username}** accepted your collab request! 🎉\n\n📌 Your private channel: <#${collabChannel.id}>`
+        : `**${collab.creator_username}** accepted your collab request! 🎉 They'll reach out to you directly.`;
+      await requesterUser.send({ embeds: [new EmbedBuilder().setColor(0x00FF00).setTitle('✅ Collab accepted!').setDescription(dmText)] });
+    } catch (e) {}
+
+    await interaction.update({
+      content: `✅ You accepted the collab request from <@${requesterId}>!${collabChannel ? ` Channel: <#${collabChannel.id}>` : ''}`,
+      embeds: [],
+      components: [],
+    });
+  }
+
+  // ═══ COLLAB DECLINE (from DM) ═══
+  else if (customId.startsWith('collab_decline_')) {
+    const parts = customId.replace('collab_decline_', '').split('_');
+    const collabId = parseInt(parts[0]);
+    const requesterId = parts[1];
+    const collab = db.getCollabById(collabId);
+
+    if (!collab) return interaction.reply({ content: '❌ Collab not found.', ephemeral: true });
+
+    const existing = db.getCollabRequest(collabId, requesterId);
+    if (existing && existing.status !== 'pending') {
+      return interaction.update({ content: `This request has already been **${existing.status}**.`, embeds: [], components: [] });
+    }
+
+    db.updateCollabRequestStatus(collabId, requesterId, 'declined');
+
+    try {
+      const requesterUser = await interaction.client.users.fetch(requesterId);
+      await requesterUser.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('❌ Collab declined')
+          .setDescription(`**${collab.creator_username}** declined your collab request this time. Keep creating! 💪`)
+        ],
+      });
+    } catch (e) {}
+
+    await interaction.update({
+      content: `❌ You declined the collab request from <@${requesterId}>.`,
+      embeds: [],
+      components: [],
+    });
+  }
+
   // ═══ CLOSE CHANNEL BUTTON ═══
   else if (customId === 'close_channel') {
     const staffRoleId = process.env.STAFF_ROLE_ID;

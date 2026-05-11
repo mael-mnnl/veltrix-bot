@@ -5,6 +5,7 @@ const demo = require('./commands/demo');
 const review = require('./commands/review');
 const { stats, leaderboard } = require('./commands/stats');
 const mydemos = require('./commands/mydemos');
+const collab = require('./commands/collab');
 
 const commands = [
   demo.data.toJSON(),
@@ -12,6 +13,7 @@ const commands = [
   stats.data.toJSON(),
   leaderboard.data.toJSON(),
   mydemos.data.toJSON(),
+  collab.data.toJSON(),
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
