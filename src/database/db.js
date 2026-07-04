@@ -2,7 +2,8 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'veltrix.db');
+// DB_PATH env var lets hosts mount the DB on a persistent volume (Railway, Docker…)
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', '..', 'veltrix.db');
 
 let db = null;
 let dbReady = null;
@@ -82,10 +83,29 @@ function initTables() {
     FOREIGN KEY (collab_id) REFERENCES collabs(id),
     UNIQUE(collab_id, requester_user_id)
   );`);
+  db.run(`CREATE TABLE IF NOT EXISTS guild_settings (
+    guild_id TEXT PRIMARY KEY,
+    label_name TEXT DEFAULT NULL,
+    staff_channel_id TEXT DEFAULT NULL,
+    collab_channel_id TEXT DEFAULT NULL,
+    release_category_id TEXT DEFAULT NULL,
+    collab_category_id TEXT DEFAULT NULL,
+    ar_role_id TEXT DEFAULT NULL,
+    staff_role_id TEXT DEFAULT NULL,
+    review_role_id TEXT DEFAULT NULL,
+    score_threshold INTEGER DEFAULT NULL,
+    updated_at DATETIME DEFAULT (datetime('now'))
+  );`);
   try { db.run(`ALTER TABLE demos ADD COLUMN reminder_sent INTEGER DEFAULT 0`); } catch(e) {}
+  try { db.run(`ALTER TABLE demos ADD COLUMN guild_id TEXT DEFAULT NULL`); } catch(e) {}
+  // Legacy single-guild installs: attach existing demos to the env-configured guild
+  if (process.env.GUILD_ID) {
+    db.run(`UPDATE demos SET guild_id = ? WHERE guild_id IS NULL`, [process.env.GUILD_ID]);
+  }
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_status ON demos(status);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_ticket ON demos(ticket_id);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_user ON demos(discord_user_id);`); } catch(e) {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_demos_guild ON demos(guild_id);`); } catch(e) {}
   try { db.run(`CREATE INDEX IF NOT EXISTS idx_votes_demo ON votes(demo_id);`); } catch(e) {}
   save();
 }
@@ -130,12 +150,12 @@ function generateTicketId() {
   return id;
 }
 
-function createDemo({ discordUserId, discordUsername, artistName, trackTitle, genre, demoLink, contact, notes }) {
+function createDemo({ guildId, discordUserId, discordUsername, artistName, trackTitle, genre, demoLink, contact, notes }) {
   const ticketId = generateTicketId();
   run(
-    `INSERT INTO demos (ticket_id, discord_user_id, discord_username, artist_name, track_title, genre, demo_link, contact, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [ticketId, discordUserId, discordUsername, artistName, trackTitle, genre || 'Non spécifié', demoLink, contact || '', notes || '']
+    `INSERT INTO demos (ticket_id, guild_id, discord_user_id, discord_username, artist_name, track_title, genre, demo_link, contact, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [ticketId, guildId || null, discordUserId, discordUsername, artistName, trackTitle, genre || 'Non spécifié', demoLink, contact || '', notes || '']
   );
   const demo = queryOne('SELECT id FROM demos WHERE ticket_id = ?', [ticketId]);
   return { id: demo.id, ticketId };
@@ -163,17 +183,17 @@ function deleteDemo(ticketId) {
   run('DELETE FROM demos WHERE ticket_id = ?', [ticketId]);
 }
 
-function deleteDemosByUser(userId) {
-  const demos = queryAll('SELECT id FROM demos WHERE discord_user_id = ?', [userId]);
+function deleteDemosByUser(userId, guildId) {
+  const demos = queryAll('SELECT id FROM demos WHERE discord_user_id = ? AND guild_id = ?', [userId, guildId]);
   for (const d of demos) run('DELETE FROM votes WHERE demo_id = ?', [d.id]);
-  run('DELETE FROM demos WHERE discord_user_id = ?', [userId]);
+  run('DELETE FROM demos WHERE discord_user_id = ? AND guild_id = ?', [userId, guildId]);
   return demos.length;
 }
 
-function deleteDemosByStatus(status) {
-  const demos = queryAll('SELECT id FROM demos WHERE status = ?', [status]);
+function deleteDemosByStatus(status, guildId) {
+  const demos = queryAll('SELECT id FROM demos WHERE status = ? AND guild_id = ?', [status, guildId]);
   for (const d of demos) run('DELETE FROM votes WHERE demo_id = ?', [d.id]);
-  run('DELETE FROM demos WHERE status = ?', [status]);
+  run('DELETE FROM demos WHERE status = ? AND guild_id = ?', [status, guildId]);
   return demos.length;
 }
 
@@ -187,14 +207,14 @@ function markReminderSent(ticketId) {
   run('UPDATE demos SET reminder_sent = 1 WHERE ticket_id = ?', [ticketId]);
 }
 
-function getLeaderboardByAccepted() {
+function getLeaderboardByAccepted(guildId) {
   return queryAll(`
     SELECT discord_user_id, discord_username, COUNT(*) as accepted_count
-    FROM demos WHERE status = 'accepted'
+    FROM demos WHERE status = 'accepted' AND guild_id = ?
     GROUP BY discord_user_id
     ORDER BY accepted_count DESC
     LIMIT 10
-  `);
+  `, [guildId]);
 }
 
 // ═══ VOTES ═══
@@ -213,42 +233,73 @@ function addVote(demoId, userId, vote) {
   return { changed: true, action: 'new' };
 }
 
-// ═══ QUERIES ═══
-function getDemosByStatus(status, limit = 25) {
-  return queryAll('SELECT * FROM demos WHERE status = ? ORDER BY submitted_at DESC LIMIT ?', [status, limit]);
+// ═══ QUERIES (scoped per guild) ═══
+function getDemosByStatus(guildId, status, limit = 25) {
+  return queryAll('SELECT * FROM demos WHERE guild_id = ? AND status = ? ORDER BY submitted_at DESC LIMIT ?', [guildId, status, limit]);
 }
-function getDemosByUser(userId) {
-  return queryAll('SELECT * FROM demos WHERE discord_user_id = ? ORDER BY submitted_at DESC', [userId]);
+function getDemosByUser(userId, guildId) {
+  return queryAll('SELECT * FROM demos WHERE discord_user_id = ? AND guild_id = ? ORDER BY submitted_at DESC', [userId, guildId]);
 }
-function getAllDemos(limit = 50) {
-  return queryAll('SELECT * FROM demos ORDER BY submitted_at DESC LIMIT ?', [limit]);
+function getAllDemos(guildId, limit = 50) {
+  return queryAll('SELECT * FROM demos WHERE guild_id = ? ORDER BY submitted_at DESC LIMIT ?', [guildId, limit]);
 }
-function searchDemos(query) {
+function searchDemos(guildId, query) {
   const like = `%${query}%`;
   return queryAll(
-    `SELECT * FROM demos WHERE artist_name LIKE ? OR track_title LIKE ? OR ticket_id LIKE ? OR genre LIKE ? ORDER BY submitted_at DESC LIMIT 25`,
-    [like, like, like, like]
+    `SELECT * FROM demos WHERE guild_id = ? AND (artist_name LIKE ? OR track_title LIKE ? OR ticket_id LIKE ? OR genre LIKE ?) ORDER BY submitted_at DESC LIMIT 25`,
+    [guildId, like, like, like, like]
   );
 }
 
-// ═══ STATS ═══
-function getStats() {
-  const total = queryOne('SELECT COUNT(*) as count FROM demos').count;
-  const pending = queryOne("SELECT COUNT(*) as count FROM demos WHERE status = 'pending'").count;
-  const reviewing = queryOne("SELECT COUNT(*) as count FROM demos WHERE status = 'reviewing'").count;
-  const accepted = queryOne("SELECT COUNT(*) as count FROM demos WHERE status = 'accepted'").count;
-  const rejected = queryOne("SELECT COUNT(*) as count FROM demos WHERE status = 'rejected'").count;
-  const thisWeek = queryOne("SELECT COUNT(*) as count FROM demos WHERE submitted_at >= datetime('now','-7 days')").count;
-  const topGenres = queryAll('SELECT genre, COUNT(*) as count FROM demos GROUP BY genre ORDER BY count DESC LIMIT 5');
-  const recentAccepted = queryAll("SELECT artist_name, track_title, ticket_id FROM demos WHERE status = 'accepted' ORDER BY reviewed_at DESC LIMIT 5");
+// ═══ STATS (scoped per guild) ═══
+function getStats(guildId) {
+  const count = (sql, params = []) => queryOne(sql, [guildId, ...params]).count;
+  const total = count('SELECT COUNT(*) as count FROM demos WHERE guild_id = ?');
+  const pending = count("SELECT COUNT(*) as count FROM demos WHERE guild_id = ? AND status = 'pending'");
+  const reviewing = count("SELECT COUNT(*) as count FROM demos WHERE guild_id = ? AND status = 'reviewing'");
+  const accepted = count("SELECT COUNT(*) as count FROM demos WHERE guild_id = ? AND status = 'accepted'");
+  const rejected = count("SELECT COUNT(*) as count FROM demos WHERE guild_id = ? AND status = 'rejected'");
+  const thisWeek = count("SELECT COUNT(*) as count FROM demos WHERE guild_id = ? AND submitted_at >= datetime('now','-7 days')");
+  const topGenres = queryAll('SELECT genre, COUNT(*) as count FROM demos WHERE guild_id = ? GROUP BY genre ORDER BY count DESC LIMIT 5', [guildId]);
+  const recentAccepted = queryAll("SELECT artist_name, track_title, ticket_id FROM demos WHERE guild_id = ? AND status = 'accepted' ORDER BY reviewed_at DESC LIMIT 5", [guildId]);
   return { total, pending, reviewing, accepted, rejected, thisWeek, topGenres, recentAccepted };
 }
 
-function getLeaderboard() {
+function getLeaderboard(guildId) {
   return queryAll(`
     SELECT ticket_id, artist_name, track_title, votes_up, votes_down, (votes_up - votes_down) as score, status
-    FROM demos WHERE votes_up > 0 OR votes_down > 0 ORDER BY score DESC LIMIT 10
-  `);
+    FROM demos WHERE guild_id = ? AND (votes_up > 0 OR votes_down > 0) ORDER BY score DESC LIMIT 10
+  `, [guildId]);
+}
+
+// ═══ GUILD SETTINGS ═══
+const GUILD_SETTING_KEYS = [
+  'label_name', 'staff_channel_id', 'collab_channel_id',
+  'release_category_id', 'collab_category_id',
+  'ar_role_id', 'staff_role_id', 'review_role_id', 'score_threshold',
+];
+
+function getGuildSettings(guildId) {
+  return queryOne('SELECT * FROM guild_settings WHERE guild_id = ?', [guildId]);
+}
+
+function upsertGuildSettings(guildId, patch) {
+  const keys = Object.keys(patch).filter(k => GUILD_SETTING_KEYS.includes(k));
+  if (keys.length === 0) return getGuildSettings(guildId);
+  const existing = getGuildSettings(guildId);
+  if (existing) {
+    const sets = keys.map(k => `${k} = ?`).join(', ');
+    run(`UPDATE guild_settings SET ${sets}, updated_at = datetime('now') WHERE guild_id = ?`,
+      [...keys.map(k => patch[k]), guildId]);
+  } else {
+    run(`INSERT INTO guild_settings (guild_id, ${keys.join(', ')}) VALUES (?${', ?'.repeat(keys.length)})`,
+      [guildId, ...keys.map(k => patch[k])]);
+  }
+  return getGuildSettings(guildId);
+}
+
+function resetGuildSettings(guildId) {
+  run('DELETE FROM guild_settings WHERE guild_id = ?', [guildId]);
 }
 
 // ═══ COLLABS ═══
@@ -287,6 +338,7 @@ module.exports = {
   getDemosNeedingReminder, markReminderSent,
   addVote, getDemosByStatus, getDemosByUser, getAllDemos, searchDemos,
   getStats, getLeaderboard, getLeaderboardByAccepted,
+  getGuildSettings, upsertGuildSettings, resetGuildSettings,
   createCollab, getCollabById, getCollabByMessageId, setCollabMessage,
   createCollabRequest, getCollabRequest, updateCollabRequestStatus,
 };

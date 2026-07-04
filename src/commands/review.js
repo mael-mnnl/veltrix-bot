@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const db = require('../database/db');
+const { getConfig, isStaff: isStaffMember, canReview } = require('../config/guildConfig');
 const { demoEmbed, successEmbed, errorEmbed, STATUS_EMOJI, STATUS_LABEL } = require('../utils/embeds');
 
 module.exports = {
@@ -66,16 +67,24 @@ module.exports = {
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
-    const arRoleId = process.env.AR_ROLE_ID;
-    const isStaff = interaction.member.permissions.has('ManageMessages');
-    const isAR = interaction.member.roles.cache.has(arRoleId);
+    const cfg = getConfig(interaction.guildId);
+    const isStaff = isStaffMember(interaction.member, cfg);
+    const isAR = canReview(interaction.member, cfg);
+
+    // Tickets from other servers must stay invisible here (multi-tenant isolation).
+    // Legacy rows without a guild_id stay accessible.
+    const findDemo = (ticketId) => {
+      const d = db.getDemo(ticketId);
+      if (d && d.guild_id && d.guild_id !== interaction.guildId) return null;
+      return d;
+    };
 
     switch (sub) {
       case 'accept': {
         if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const comment = interaction.options.getString('comment');
-        const demo = db.getDemo(ticketId);
+        const demo = findDemo(ticketId);
 
         if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\``)], ephemeral: true });
 
@@ -84,7 +93,7 @@ module.exports = {
 
         try {
           const artist = await interaction.client.users.fetch(demo.discord_user_id);
-          let dmText = `**${demo.track_title}** has been approved by Veltrix Records! We'll be in touch soon. 🔥`;
+          let dmText = `**${demo.track_title}** has been approved by ${cfg.label_name}! We'll be in touch soon. 🔥`;
           if (comment) dmText += `\n\n💬 *"${comment}"*`;
           await artist.send({ embeds: [successEmbed('Your demo has been accepted! 🎉', dmText)] });
         } catch (e) {}
@@ -96,14 +105,14 @@ module.exports = {
           } catch (e) {}
         }
 
-        return interaction.reply({ embeds: [demoEmbed(updated)], content: `✅ **${demo.track_title}** by **${demo.artist_name}** accepted!` });
+        return interaction.reply({ embeds: [demoEmbed(updated, { labelName: cfg.label_name })], content: `✅ **${demo.track_title}** by **${demo.artist_name}** accepted!` });
       }
 
       case 'reject': {
         if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const comment = interaction.options.getString('comment');
-        const demo = db.getDemo(ticketId);
+        const demo = findDemo(ticketId);
 
         if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\``)], ephemeral: true });
 
@@ -124,14 +133,14 @@ module.exports = {
           } catch (e) {}
         }
 
-        return interaction.reply({ embeds: [demoEmbed(updated)], content: `❌ **${demo.track_title}** by **${demo.artist_name}** rejected.` });
+        return interaction.reply({ embeds: [demoEmbed(updated, { labelName: cfg.label_name })], content: `❌ **${demo.track_title}** by **${demo.artist_name}** rejected.` });
       }
 
       case 'assign': {
         if (!isStaff) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need staff permissions to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
         const reviewer = interaction.options.getUser('reviewer');
-        const demo = db.getDemo(ticketId);
+        const demo = findDemo(ticketId);
 
         if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\``)], ephemeral: true });
 
@@ -139,7 +148,7 @@ module.exports = {
         const updated = db.getDemo(ticketId);
 
         return interaction.reply({
-          embeds: [demoEmbed(updated)],
+          embeds: [demoEmbed(updated, { labelName: cfg.label_name })],
           content: `🔍 **${demo.track_title}** assigned to <@${reviewer.id}> for review.`,
         });
       }
@@ -147,17 +156,17 @@ module.exports = {
       case 'view': {
         if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const ticketId = interaction.options.getString('ticket').toUpperCase();
-        const demo = db.getDemo(ticketId);
+        const demo = findDemo(ticketId);
 
         if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\``)], ephemeral: true });
 
-        return interaction.reply({ embeds: [demoEmbed(demo)] });
+        return interaction.reply({ embeds: [demoEmbed(demo, { labelName: cfg.label_name })] });
       }
 
       case 'list': {
         if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const status = interaction.options.getString('status');
-        const demos = status ? db.getDemosByStatus(status) : db.getAllDemos();
+        const demos = status ? db.getDemosByStatus(interaction.guildId, status) : db.getAllDemos(interaction.guildId);
 
         if (demos.length === 0) {
           return interaction.reply({ embeds: [errorEmbed('No results', 'No demos found.')], ephemeral: true });
@@ -181,7 +190,7 @@ module.exports = {
       case 'search': {
         if (!isStaff && !isAR) return interaction.reply({ embeds: [errorEmbed('Permission denied', 'You need to be staff or AR to do this.')], ephemeral: true });
         const query = interaction.options.getString('query');
-        const results = db.searchDemos(query);
+        const results = db.searchDemos(interaction.guildId, query);
 
         if (results.length === 0) {
           return interaction.reply({ embeds: [errorEmbed('No results', `Nothing found for "${query}".`)], ephemeral: true });
@@ -214,19 +223,19 @@ module.exports = {
 
         if (ticketOpt) {
           const ticketId = ticketOpt.toUpperCase();
-          const demo = db.getDemo(ticketId);
+          const demo = findDemo(ticketId);
           if (!demo) return interaction.reply({ embeds: [errorEmbed('Ticket not found', `No demo with ID \`${ticketId}\`.`)], ephemeral: true });
           db.deleteDemo(ticketId);
           return interaction.reply({ content: `🗑️ Demo \`${ticketId}\` (**${demo.track_title}** by ${demo.artist_name}) deleted.`, ephemeral: true });
         }
 
         if (targetUser) {
-          const count = db.deleteDemosByUser(targetUser.id);
+          const count = db.deleteDemosByUser(targetUser.id, interaction.guildId);
           return interaction.reply({ content: `🗑️ **${count}** demo(s) from <@${targetUser.id}> deleted.`, ephemeral: true });
         }
 
         if (statusOpt) {
-          const count = db.deleteDemosByStatus(statusOpt);
+          const count = db.deleteDemosByStatus(statusOpt, interaction.guildId);
           return interaction.reply({ content: `🗑️ **${count}** demo(s) with status **${statusOpt}** deleted.`, ephemeral: true });
         }
       }

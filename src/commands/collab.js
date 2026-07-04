@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database/db');
+const { getConfig } = require('../config/guildConfig');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -28,9 +29,9 @@ module.exports = {
     const genre = interaction.options.getString('genre');
     const contact = interaction.options.getString('contact');
 
-    const collabChannelId = process.env.COLLAB_CHANNEL_ID;
+    const collabChannelId = getConfig(interaction.guildId).collab_channel_id;
     if (!collabChannelId) {
-      return interaction.reply({ content: '❌ COLLAB_CHANNEL_ID not configured.', ephemeral: true });
+      return interaction.reply({ content: '❌ No collab channel configured on this server. An admin must run `/setup channels collab:#channel` first.', ephemeral: true });
     }
 
     const collabChannel = await interaction.client.channels.fetch(collabChannelId).catch(() => null);

@@ -1,6 +1,7 @@
 const https = require('https');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const db = require('../database/db');
+const { getConfig, isStaff, canReview } = require('../config/guildConfig');
 const { demoEmbed, successEmbed, errorEmbed, infoEmbed } = require('../utils/embeds');
 
 function fetchSCThumbnail(url) {
@@ -19,10 +20,6 @@ function fetchSCThumbnail(url) {
   });
 }
 
-function hasReviewPermission(member) {
-  const reviewRoleId = process.env.REVIEW_ROLE_ID;
-  return reviewRoleId && member.roles.cache.has(reviewRoleId);
-}
 
 // ═══════════════════════════════════════════════════════
 // MODAL SUBMISSIONS
@@ -46,6 +43,7 @@ async function handleModalSubmit(interaction) {
     }
 
     const { id, ticketId } = db.createDemo({
+      guildId: interaction.guildId,
       discordUserId: interaction.user.id,
       discordUsername: interaction.user.username,
       artistName,
@@ -64,8 +62,9 @@ async function handleModalSubmit(interaction) {
       ephemeral: true,
     });
 
-    const staffChannelId = process.env.STAFF_CHANNEL_ID;
-    if (!staffChannelId) { console.log('⚠️ No STAFF_CHANNEL_ID set'); return; }
+    const cfg = getConfig(interaction.guildId);
+    const staffChannelId = cfg.staff_channel_id;
+    if (!staffChannelId) { console.log(`⚠️ No staff channel configured for guild ${interaction.guildId} — run /setup channels`); return; }
 
     try {
       const staffChannel = await interaction.client.channels.fetch(staffChannelId);
@@ -87,10 +86,10 @@ async function handleModalSubmit(interaction) {
       if (notes) embed.addFields({ name: '📝 Notes', value: notes });
       if (thumbnail) embed.setThumbnail(thumbnail);
       embed
-        .setFooter({ text: `Submitted by ${interaction.user.username} • VELTRIX RECORDS` })
+        .setFooter({ text: `Submitted by ${interaction.user.username} • ${cfg.label_name}` })
         .setTimestamp();
 
-      const arRolePing = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
+      const arRolePing = cfg.ar_role_id ? `<@&${cfg.ar_role_id}> ` : '';
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -143,23 +142,24 @@ async function handleModalSubmit(interaction) {
 
     if (!demo) return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
 
+    const cfg = getConfig(interaction.guildId);
     db.updateDemoStatus(ticketId, 'accepted', interaction.user.id, reason || null);
     const updated = db.getDemo(ticketId);
 
     try {
-      const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+      const staffChannel = cfg.staff_channel_id && await interaction.client.channels.fetch(cfg.staff_channel_id);
       if (staffChannel && demo.message_id) {
         const originalMsg = await staffChannel.messages.fetch(demo.message_id);
-        const embed = demoEmbed(updated, { showVotes: true, showStatus: true });
+        const embed = demoEmbed(updated, { showVotes: true, showStatus: true, labelName: cfg.label_name });
         await originalMsg.edit({ embeds: [embed], components: [] });
       }
     } catch (e) {}
 
     // ═══ CREATE RELEASE CHANNEL ═══
     let releaseChannel = null;
-    const categoryId = process.env.RELEASE_CATEGORY_ID;
-    const staffRoleId = process.env.STAFF_ROLE_ID;
-    const arRoleId = process.env.AR_ROLE_ID;
+    const categoryId = cfg.release_category_id;
+    const staffRoleId = cfg.staff_role_id;
+    const arRoleId = cfg.ar_role_id;
 
     if (categoryId) {
       try {
@@ -198,7 +198,7 @@ async function handleModalSubmit(interaction) {
 
         const welcomeEmbed = successEmbed(
           `Release — ${demo.track_title}`,
-          `Welcome <@${demo.discord_user_id}>! 🎉\n\nYour demo **${demo.track_title}** has been accepted by the Veltrix team.\n\n` +
+          `Welcome <@${demo.discord_user_id}>! 🎉\n\nYour demo **${demo.track_title}** has been accepted by the ${cfg.label_name} team.\n\n` +
           `**🎫 Ticket:** \`${demo.ticket_id}\`\n` +
           `**🎭 Genre:** ${demo.genre}\n` +
           `**🔗 Demo:** ${demo.demo_link}\n\n` +
@@ -231,7 +231,7 @@ async function handleModalSubmit(interaction) {
     // DM the artist
     try {
       const artist = await interaction.client.users.fetch(demo.discord_user_id);
-      let dmText = `**${demo.track_title}** has been approved by Veltrix Records! We'll be in touch soon. 🔥`;
+      let dmText = `**${demo.track_title}** has been approved by ${cfg.label_name}! We'll be in touch soon. 🔥`;
       if (reason) dmText += `\n\n💬 *"${reason}"*`;
       if (releaseChannel) dmText += `\n\n📌 A private channel has been created for your release: <#${releaseChannel.id}>`;
       await artist.send({ embeds: [successEmbed('Your demo has been accepted! 🎉', dmText)] });
@@ -256,14 +256,15 @@ async function handleModalSubmit(interaction) {
 
     if (!demo) return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
 
+    const cfg = getConfig(interaction.guildId);
     db.updateDemoStatus(ticketId, 'rejected', interaction.user.id, reason || null);
     const updated = db.getDemo(ticketId);
 
     try {
-      const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+      const staffChannel = cfg.staff_channel_id && await interaction.client.channels.fetch(cfg.staff_channel_id);
       if (staffChannel && demo.message_id) {
         const originalMsg = await staffChannel.messages.fetch(demo.message_id);
-        const embed = demoEmbed(updated, { showVotes: true, showStatus: true });
+        const embed = demoEmbed(updated, { showVotes: true, showStatus: true, labelName: cfg.label_name });
         await originalMsg.edit({ embeds: [embed], components: [] });
       }
     } catch (e) {}
@@ -310,21 +311,22 @@ async function handleButtonInteraction(interaction) {
 
     const demo = db.getDemoById(demoId);
     const newScore = demo.votes_up - demo.votes_down;
-    const SCORE_THRESHOLD = parseInt(process.env.SCORE_THRESHOLD) || 5;
+    const cfg = getConfig(interaction.guildId);
+    const SCORE_THRESHOLD = cfg.score_threshold;
 
-    const embed = demoEmbed(demo, { showVotes: true, showStatus: true });
+    const embed = demoEmbed(demo, { showVotes: true, showStatus: true, labelName: cfg.label_name });
     await interaction.update({ embeds: [embed] });
 
     if (oldScore < SCORE_THRESHOLD && newScore >= SCORE_THRESHOLD) {
       try {
-        const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+        const staffChannel = cfg.staff_channel_id && await interaction.client.channels.fetch(cfg.staff_channel_id);
         if (staffChannel) {
           const notifEmbed = new EmbedBuilder()
             .setColor(0xFFD700)
             .setTitle(`🔥 ${demo.track_title} — Score +${newScore}!`)
             .setDescription(`by **${demo.artist_name}** • \`${demo.ticket_id}\`\n\nThis demo has reached the threshold of **+${SCORE_THRESHOLD}** votes. It deserves a decision!`)
             .setTimestamp();
-          const ping = process.env.AR_ROLE_ID ? `<@&${process.env.AR_ROLE_ID}> ` : '';
+          const ping = cfg.ar_role_id ? `<@&${cfg.ar_role_id}> ` : '';
           await staffChannel.send({ content: `${ping}🔥 Score threshold reached!`, embeds: [notifEmbed] });
         }
       } catch (e) {}
@@ -333,7 +335,7 @@ async function handleButtonInteraction(interaction) {
 
   // ═══ ACCEPT BUTTON ═══
   else if (customId.startsWith('demo_accept_')) {
-    if (!hasReviewPermission(interaction.member)) {
+    if (!canReview(interaction.member, getConfig(interaction.guildId))) {
       return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
     }
 
@@ -356,7 +358,7 @@ async function handleButtonInteraction(interaction) {
 
   // ═══ REJECT BUTTON ═══
   else if (customId.startsWith('demo_reject_')) {
-    if (!hasReviewPermission(interaction.member)) {
+    if (!canReview(interaction.member, getConfig(interaction.guildId))) {
       return interaction.reply({ content: '❌ You don\'t have permission to do this.', ephemeral: true });
     }
 
@@ -424,7 +426,8 @@ async function handleButtonInteraction(interaction) {
     }
 
     try {
-      const staffChannel = await interaction.client.channels.fetch(process.env.STAFF_CHANNEL_ID);
+      const cfg = getConfig(demo.guild_id || interaction.guildId);
+      const staffChannel = cfg.staff_channel_id && await interaction.client.channels.fetch(cfg.staff_channel_id);
       if (staffChannel && demo.message_id) {
         try {
           const msg = await staffChannel.messages.fetch(demo.message_id);
@@ -514,8 +517,10 @@ async function handleButtonInteraction(interaction) {
     let collabChannel = null;
     try {
       const guild = await interaction.client.guilds.fetch(collab.guild_id);
-      const categoryId = process.env.COLLAB_CATEGORY_ID || process.env.RELEASE_CATEGORY_ID;
-      const staffRoleId = process.env.STAFF_ROLE_ID;
+      // This runs in a DM — resolve config from the guild the collab was created in
+      const collabCfg = getConfig(collab.guild_id);
+      const categoryId = collabCfg.collab_category_id;
+      const staffRoleId = collabCfg.staff_role_id;
 
       const creatorSlug = collab.creator_username.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 12);
       const requesterUser = await interaction.client.users.fetch(requesterId);
@@ -628,15 +633,13 @@ async function handleButtonInteraction(interaction) {
 
   // ═══ CLOSE CHANNEL BUTTON ═══
   else if (customId === 'close_channel') {
-    const staffRoleId = process.env.STAFF_ROLE_ID;
-    const arRoleId = process.env.AR_ROLE_ID;
-    const reviewRoleId = process.env.REVIEW_ROLE_ID;
+    const cfg = getConfig(interaction.guildId);
 
     const isAuth =
       interaction.member.permissions.has('ManageChannels') ||
-      (staffRoleId && interaction.member.roles.cache.has(staffRoleId)) ||
-      (arRoleId && interaction.member.roles.cache.has(arRoleId)) ||
-      (reviewRoleId && interaction.member.roles.cache.has(reviewRoleId));
+      (cfg.staff_role_id && interaction.member.roles.cache.has(cfg.staff_role_id)) ||
+      (cfg.ar_role_id && interaction.member.roles.cache.has(cfg.ar_role_id)) ||
+      (cfg.review_role_id && interaction.member.roles.cache.has(cfg.review_role_id));
 
     if (!isAuth) {
       return interaction.reply({ content: '❌ You don\'t have permission to close this channel.', ephemeral: true });

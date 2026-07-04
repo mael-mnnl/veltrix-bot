@@ -26,7 +26,9 @@ const STATUS_LABEL = {
   rejected: 'Rejected',
 };
 
-function demoEmbed(demo, { showVotes = true, showStatus = true } = {}) {
+const DEFAULT_LABEL = process.env.LABEL_NAME || 'VELTRIX RECORDS';
+
+function demoEmbed(demo, { showVotes = true, showStatus = true, labelName = DEFAULT_LABEL } = {}) {
   const embed = new EmbedBuilder()
     .setColor(COLORS[demo.status] || COLORS.primary)
     .setTitle(`${STATUS_EMOJI[demo.status] || '🎵'} ${demo.track_title}`)
@@ -73,13 +75,13 @@ function demoEmbed(demo, { showVotes = true, showStatus = true } = {}) {
   }
 
   embed
-    .setFooter({ text: `Submitted by ${demo.discord_username} • VELTRIX RECORDS` })
+    .setFooter({ text: `Submitted by ${demo.discord_username} • ${labelName}` })
     .setTimestamp(new Date(demo.submitted_at));
 
   return embed;
 }
 
-function statsEmbed(stats) {
+function statsEmbed(stats, { labelName = DEFAULT_LABEL } = {}) {
   const genresText = stats.topGenres.length > 0
     ? stats.topGenres.map((g, i) => `${i + 1}. **${g.genre}** — ${g.count}`).join('\n')
     : 'No data yet';
@@ -90,7 +92,7 @@ function statsEmbed(stats) {
 
   return new EmbedBuilder()
     .setColor(COLORS.primary)
-    .setTitle('📊 VELTRIX RECORDS — Dashboard')
+    .setTitle(`📊 ${labelName} — Dashboard`)
     .addFields(
       { name: '📨 Total demos', value: `**${stats.total}**`, inline: true },
       { name: '📅 This week', value: `**${stats.thisWeek}**`, inline: true },
@@ -104,7 +106,7 @@ function statsEmbed(stats) {
       { name: '🔥 Top Genres', value: genresText },
       { name: '🏆 Recently accepted', value: recentText },
     )
-    .setFooter({ text: 'VELTRIX RECORDS • Live stats' })
+    .setFooter({ text: `${labelName} • Live stats` })
     .setTimestamp();
 }
 

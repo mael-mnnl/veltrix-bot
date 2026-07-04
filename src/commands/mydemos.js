@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database/db');
+const { getConfig } = require('../config/guildConfig');
 const { STATUS_EMOJI, STATUS_LABEL } = require('../utils/embeds');
 
 module.exports = {
@@ -8,14 +9,15 @@ module.exports = {
     .setDescription('Check the status of your submissions'),
 
   async execute(interaction) {
-    const demos = db.getDemosByUser(interaction.user.id);
+    const demos = db.getDemosByUser(interaction.user.id, interaction.guildId);
+    const cfg = getConfig(interaction.guildId);
 
     if (demos.length === 0) {
       const embed = new EmbedBuilder()
         .setColor(0x555555)
         .setTitle('🎵 Your Submissions')
         .setDescription('You haven\'t submitted any demos yet.\nUse `/demo` to send one!')
-        .setFooter({ text: 'VELTRIX RECORDS' });
+        .setFooter({ text: cfg.label_name });
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
@@ -28,7 +30,7 @@ module.exports = {
 
     const embed = new EmbedBuilder()
       .setColor(0x000000)
-      .setTitle('🎵 Your Veltrix Submissions')
+      .setTitle(`🎵 Your ${cfg.label_name} Submissions`)
       .setDescription(lines.join('\n'))
       .setFooter({ text: `${demos.length} submission(s) total` })
       .setTimestamp();

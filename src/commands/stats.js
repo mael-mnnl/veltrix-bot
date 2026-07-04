@@ -1,35 +1,38 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const db = require('../database/db');
+const { getConfig } = require('../config/guildConfig');
 const { statsEmbed } = require('../utils/embeds');
 
 const stats = {
   data: new SlashCommandBuilder()
     .setName('stats')
-    .setDescription('Veltrix stats dashboard (Staff)')
+    .setDescription('Label stats dashboard (Staff)')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
   async execute(interaction) {
-    const data = db.getStats();
-    return interaction.reply({ embeds: [statsEmbed(data)] });
+    const cfg = getConfig(interaction.guildId);
+    const data = db.getStats(interaction.guildId);
+    return interaction.reply({ embeds: [statsEmbed(data, { labelName: cfg.label_name })] });
   },
 };
 
 const leaderboard = {
   data: new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Veltrix top artists — ranked by accepted demos'),
+    .setDescription('Top artists — ranked by accepted demos'),
 
   async execute(interaction) {
     await interaction.deferReply();
 
-    const entries = db.getLeaderboardByAccepted();
+    const entries = db.getLeaderboardByAccepted(interaction.guildId);
+    const cfg = getConfig(interaction.guildId);
 
     if (entries.length === 0) {
       const embed = new EmbedBuilder()
         .setColor(0x000000)
-        .setTitle('🏆 Veltrix Leaderboard')
+        .setTitle('🏆 Leaderboard')
         .setDescription('No artists in the leaderboard yet.\nSubmit a demo with `/demo`!')
-        .setFooter({ text: 'VELTRIX RECORDS' });
+        .setFooter({ text: cfg.label_name });
       return interaction.editReply({ embeds: [embed] });
     }
 
@@ -55,9 +58,9 @@ const leaderboard = {
 
     const embed = new EmbedBuilder()
       .setColor(0xFFD700)
-      .setTitle('🏆 Leaderboard — Veltrix Artists')
+      .setTitle(`🏆 Leaderboard — ${cfg.label_name} Artists`)
       .setDescription(lines.join('\n'))
-      .setFooter({ text: 'Ranked by accepted demos • VELTRIX RECORDS' })
+      .setFooter({ text: `Ranked by accepted demos • ${cfg.label_name}` })
       .setTimestamp();
 
     if (topUser) embed.setThumbnail(topUser.displayAvatarURL({ size: 256 }));
