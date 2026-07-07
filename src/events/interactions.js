@@ -21,6 +21,20 @@ function fetchSCThumbnail(url) {
 }
 
 
+// ═══ ANTI-SPAM — cooldown par utilisateur (en mémoire) ═══
+const cooldowns = new Map();
+function isOnCooldown(key, ms) {
+  const now = Date.now();
+  const until = cooldowns.get(key) || 0;
+  if (now < until) return Math.ceil((until - now) / 1000);
+  cooldowns.set(key, now + ms);
+  // purge opportuniste pour ne pas grossir indéfiniment
+  if (cooldowns.size > 5000) {
+    for (const [k, v] of cooldowns) if (v < now) cooldowns.delete(k);
+  }
+  return 0;
+}
+
 // ═══════════════════════════════════════════════════════
 // MODAL SUBMISSIONS
 // ═══════════════════════════════════════════════════════
@@ -35,9 +49,18 @@ async function handleModalSubmit(interaction) {
     const demoLink = interaction.fields.getTextInputValue('demo_link');
     const notes = interaction.fields.getTextInputValue('notes') || '';
 
-    if (!demoLink.startsWith('http')) {
+    if (!/^https?:\/\//i.test(demoLink)) {
       return interaction.reply({
         embeds: [errorEmbed('Invalid link', 'The link must start with `http://` or `https://`.')],
+        ephemeral: true,
+      });
+    }
+
+    // Anti-spam : 1 démo / 2 min / utilisateur
+    const wait = isOnCooldown(`demo:${interaction.user.id}`, 2 * 60 * 1000);
+    if (wait) {
+      return interaction.reply({
+        embeds: [errorEmbed('Slow down', `You just submitted a demo — try again in **${wait}s**.`)],
         ephemeral: true,
       });
     }

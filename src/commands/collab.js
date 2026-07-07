@@ -2,6 +2,8 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const db = require('../database/db');
 const { getConfig } = require('../config/guildConfig');
 
+const collabCooldowns = new Map();
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('collab')
@@ -28,6 +30,22 @@ module.exports = {
     const file = interaction.options.getAttachment('file');
     const genre = interaction.options.getString('genre');
     const contact = interaction.options.getString('contact');
+
+    // Anti-spam : 1 collab / 5 min / utilisateur (en mémoire)
+    const now = Date.now();
+    const until = collabCooldowns.get(interaction.user.id) || 0;
+    if (now < until) {
+      return interaction.reply({ content: `⏳ Doucement — tu pourras reposter une collab dans **${Math.ceil((until - now) / 1000)}s**.`, ephemeral: true });
+    }
+    collabCooldowns.set(interaction.user.id, now + 5 * 60 * 1000);
+
+    // Seuls les fichiers audio raisonnables sont repostés par le bot
+    if (file.contentType && !file.contentType.startsWith('audio/')) {
+      return interaction.reply({ content: '❌ Le fichier doit être un audio (mp3, wav, ogg…).', ephemeral: true });
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      return interaction.reply({ content: '❌ Fichier trop lourd (max 25 Mo).', ephemeral: true });
+    }
 
     const collabChannelId = getConfig(interaction.guildId).collab_channel_id;
     if (!collabChannelId) {
